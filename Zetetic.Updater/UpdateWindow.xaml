@@ -3,7 +3,7 @@
     x:Class="Zetetic.Updater.UpdateWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Update Window" Width="500" SizeToContent="Height" >
+    Title="Update Window" Width="500" SizeToContent="Height" Loaded="ThisWindow_Loaded">
     <StackPanel Orientation="Vertical">
         <TextBlock TextWrapping="Wrap" HorizontalAlignment="Left" Margin="10,10,10,10" Name="_upgradeLabel" VerticalAlignment="Top" Text="{Binding Path=UpdateLabel, Mode=OneWay}" FontSize="20" />
         <Border BorderBrush="LightGray" BorderThickness="1" Margin="10,10,10,10">

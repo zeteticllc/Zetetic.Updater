@@ -61,7 +61,7 @@
     <Compile Include="UpdateWindow.xaml.cs">
       <DependentUpon>UpdateWindow.xaml</DependentUpon>
     </Compile>
-    <Compile Include="UpdateWindowViewModel.cs" />
+    <Compile Include="UpdateClient.cs" />
   </ItemGroup>
   <ItemGroup>
     <Page Include="ProgressWindow.xaml">

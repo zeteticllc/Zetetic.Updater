@@ -10,32 +10,24 @@ namespace Zetetic.Updater
     /// <summary>
     /// Interaction logic for UpdateWindow.xaml
     /// </summary>
-    public partial class UpdateWindow : Window, IDisposable
+    public partial class UpdateWindow : Window
     {
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
 
-        public UpdateWindowViewModel Model;
+        public UpdateClient Model;
         private ProgressWindow _updateProgress;
 
-        public UpdateWindow(Application app, string updateUrl)
+        public UpdateWindow(UpdateClient client)
         {
             InitializeComponent();
+            DataContext = Model = client;
+        }
 
-            logger.Info("initializing update check at {0}", updateUrl);
+        private void ThisWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            WebBrowser.Navigate(Model.Manifest.ReleaseNotesUrl);
 
-            DataContext = Model = new UpdateWindowViewModel(app, updateUrl);
-
-            Model.UpdateAvailable = (o, args) => 
-            {
-                Dispatcher.Invoke((Action)(() =>
-                {
-                    WebBrowser.Navigate(Model.Manifest.ReleaseNotesUrl);
-                    Focus();
-                    ShowDialog();
-                }));
-            };
-
-            Model.UpdateBegin = (o, args) =>
+            Model.UpdateBegin += (o, args) =>
             {
                 Dispatcher.BeginInvoke((Action)(() =>
                 {
@@ -44,7 +36,7 @@ namespace Zetetic.Updater
                 }));
             };
 
-            Model.UpdateComplete = (o, args) =>
+            Model.UpdateComplete += (o, args) =>
             {
                 Dispatcher.BeginInvoke((Action)(() =>
                 {
@@ -55,33 +47,22 @@ namespace Zetetic.Updater
 
             Model.ProgressUpdate += (percent) =>
             {
-                Dispatcher.BeginInvoke((UpdateWindowViewModel.ProgressUpdateHandler)((x) =>
+                Dispatcher.BeginInvoke((Action<int>)((x) =>
                 {
                     _updateProgress.ProgressText = string.Format("{0}% complete", x);
                     _updateProgress.ProgressValue = x;
                 }), percent);
             };
 
-            Model.UpdateError = (o, args) =>
+            Model.UpdateError += (o, args) =>
             {
                 Dispatcher.BeginInvoke((Action)(() =>
                 {
-                    MessageBox.Show(((Exception) o).Message, "Update Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MessageBox.Show(((Exception)o).Message, "Update Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                     _updateProgress.Close();
                     Close();
                 }));
             };
         }
-
-        #region IDisposable Members
-
-        public virtual void Dispose()
-        {
-            if (Model != null)
-                Model.StopAsync();
-            Model = null;
-        }
-
-        #endregion
     }
 }

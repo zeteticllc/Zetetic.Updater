@@ -18,7 +18,7 @@ using NLog;
 
 namespace Zetetic.Updater
 {
-    public class UpdateWindowViewModel : INotifyPropertyChanged
+    public class UpdateClient : INotifyPropertyChanged, IDisposable
     {
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
 
@@ -31,8 +31,9 @@ namespace Zetetic.Updater
 
         private Thread _backgroundThread = null;
 
-        public UpdateWindowViewModel(Application app, string updateUrl)
+        public UpdateClient(Application app, string updateUrl)
         {
+            logger.Info("initializing update check at {0}", updateUrl);
             App = app;
             UpdateUri = updateUrl;
             DoCheck = true;
@@ -110,10 +111,9 @@ namespace Zetetic.Updater
 
         #region Commands
 
-        public EventHandler UpdateBegin;
-        public EventHandler UpdateProgress;
-        public EventHandler UpdateComplete;
-        public EventHandler UpdateError;
+        public event EventHandler UpdateBegin;
+        public event EventHandler UpdateComplete;
+        public event EventHandler UpdateError;
 
         private ICommand _updateCommand;
         public ICommand UpdateCommand
@@ -124,31 +124,8 @@ namespace Zetetic.Updater
                     (o) =>
                     {
                         DoCheck = false; // no further checks after the user provides input
-
                         if (UpdateBegin != null) UpdateBegin(o, EventArgs.Empty);
-                        
-                        try
-                        {
-                            WebRequest fileRequest = WebRequest.Create(Manifest.PackageUrl);
-                            WebResponse fileResponse = fileRequest.GetResponse();
-
-                            string installerPath = Path.GetTempPath() + @"\" + GetFilenameFromUrl(Manifest.PackageUrl);
-                            using (Stream stream = fileResponse.GetResponseStream())
-                            {
-                                ReadStreamToFile(stream, installerPath, (int)fileResponse.ContentLength);
-                            }
-
-                            CheckSignature(installerPath); // will throw on error
-                            Process.Start(installerPath);
-                            Thread.Sleep(2000);
-                            if (UpdateComplete != null) UpdateComplete(o, EventArgs.Empty);
-                            App.Shutdown();
-                        }
-                        catch (Exception e)
-                        {
-                            logger.WarnException("an error occured processing update", e);
-                            if (UpdateError != null) UpdateError(e, EventArgs.Empty);
-                        }
+                        ExecuteUpdate();
                     },
                     (o) =>
                     {
@@ -182,13 +159,14 @@ namespace Zetetic.Updater
 
         public void StopAsync()
         {
-            _backgroundThread.Abort();
+            if(_backgroundThread != null)
+                _backgroundThread.Abort();
+            _backgroundThread = null;
         }
 
-        public EventHandler UpdateAvailable;
+        public event Action<UpdateClient> UpdateAvailable;
 
-        public delegate void ProgressUpdateHandler(int percent);
-        public event ProgressUpdateHandler ProgressUpdate;
+        public event Action<int> ProgressUpdate;
 
         public void CheckForUpdates()
         {
@@ -212,7 +190,7 @@ namespace Zetetic.Updater
                             {
                                 logger.Info("Manifest version {0} is greater than current application version {1}", manifestVersion, runningVersion);
 
-                                if (UpdateAvailable != null) UpdateAvailable(this, EventArgs.Empty);
+                                if (UpdateAvailable != null) UpdateAvailable(this);
                             }
                         }
                     }
@@ -222,6 +200,32 @@ namespace Zetetic.Updater
                     logger.ErrorException(string.Format("unable to fetch path {0}", UpdateUri), ex);
                 }
                 if(DoCheck) System.Threading.Thread.Sleep(60 * 60 * 1000);
+            }
+        }
+
+        public void ExecuteUpdate()
+        {
+            try
+            {
+                WebRequest fileRequest = WebRequest.Create(Manifest.PackageUrl);
+                WebResponse fileResponse = fileRequest.GetResponse();
+
+                string installerPath = Path.GetTempPath() + @"\" + GetFilenameFromUrl(Manifest.PackageUrl);
+                using (Stream stream = fileResponse.GetResponseStream())
+                {
+                    ReadStreamToFile(stream, installerPath, (int)fileResponse.ContentLength);
+                }
+
+                CheckSignature(installerPath); // will throw on error
+                Process.Start(installerPath);
+                Thread.Sleep(2000);
+                if (UpdateComplete != null) UpdateComplete(this, EventArgs.Empty);
+                App.Shutdown();
+            }
+            catch (Exception e)
+            {
+                logger.WarnException("an error occured processing update", e);
+                if (UpdateError != null) UpdateError(e, EventArgs.Empty);
             }
         }
 
@@ -321,5 +325,14 @@ namespace Zetetic.Updater
             logger.Debug("Verifying file");
             signedFile.Verify(false); // throws an exception if the signature is invalid
         }
+
+        #region IDisposable Members
+
+        public virtual void Dispose()
+        {
+            StopAsync();
+        }
+
+        #endregion
     }
 }
