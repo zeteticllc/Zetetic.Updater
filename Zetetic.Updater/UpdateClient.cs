@@ -29,7 +29,8 @@ namespace Zetetic.Updater
             if (PropertyChanged != null) PropertyChanged(target ?? this, new PropertyChangedEventArgs(propertyName));
         }
 
-        private Thread _backgroundThread = null;
+        private Thread _checkThread = null;
+        private BackgroundWorker _downloadWorker = null;
 
         public UpdateClient(Application app, string updateUrl)
         {
@@ -37,8 +38,8 @@ namespace Zetetic.Updater
             App = app;
             UpdateUri = updateUrl;
             DoCheck = true;
-            _backgroundThread = new Thread(new ThreadStart(this.CheckForUpdates));
-            _backgroundThread.Start();
+            _checkThread = new Thread(new ThreadStart(this.CheckForUpdates));
+            _checkThread.Start();
         }
 
         #region Properties
@@ -99,6 +100,17 @@ namespace Zetetic.Updater
             }
         }
 
+        private string _installerPath;
+        public virtual string InstallerPath
+        {
+            get { return _installerPath; }
+            set
+            {
+                _installerPath = value;
+                OnPropertyChanged(this, "InstallerPath");
+            }
+        }
+
         public virtual string UpdateLabel
         {
             get 
@@ -145,6 +157,10 @@ namespace Zetetic.Updater
                     (o) =>
                     {
                         DoCheck = false;
+                        if (_downloadWorker != null)
+                        {
+                            _downloadWorker.CancelAsync();
+                        }
                         ((Window)o).Close();
                     },
                     (o) =>
@@ -159,9 +175,9 @@ namespace Zetetic.Updater
 
         public void StopAsync()
         {
-            if(_backgroundThread != null)
-                _backgroundThread.Abort();
-            _backgroundThread = null;
+            if(_checkThread != null)
+                _checkThread.Abort();
+            _checkThread = null;
         }
 
         public event Action<UpdateClient> UpdateAvailable;
@@ -205,28 +221,60 @@ namespace Zetetic.Updater
 
         public void ExecuteUpdate()
         {
-            try
+            _downloadWorker = new BackgroundWorker()
             {
-                WebRequest fileRequest = WebRequest.Create(Manifest.PackageUrl);
-                WebResponse fileResponse = fileRequest.GetResponse();
+                WorkerSupportsCancellation = true,
+                WorkerReportsProgress = true
+            };
 
-                string installerPath = Path.GetTempPath() + @"\" + GetFilenameFromUrl(Manifest.PackageUrl);
-                using (Stream stream = fileResponse.GetResponseStream())
+            _downloadWorker.DoWork += (s, e) =>
+            {
+                    WebRequest fileRequest = WebRequest.Create(Manifest.PackageUrl);
+                    WebResponse fileResponse = fileRequest.GetResponse();
+
+                    InstallerPath = Path.GetTempPath() + @"\" + GetFilenameFromUrl(Manifest.PackageUrl);
+                    using (Stream stream = fileResponse.GetResponseStream())
+                    {
+                        ReadStreamToFile(stream, InstallerPath, (int)fileResponse.ContentLength);
+                    }
+
+                    if (_downloadWorker.CancellationPending)
+                    {
+                        e.Cancel = true;
+                    }
+                    else
+                    {
+                        CheckSignature(InstallerPath); // will throw on error
+                    }
+            };
+
+            _downloadWorker.RunWorkerCompleted += (s, e) =>
+            {
+                if (e.Cancelled) 
                 {
-                    ReadStreamToFile(stream, installerPath, (int)fileResponse.ContentLength);
+                    logger.Warn("update cancelled");
+                    if (UpdateComplete != null) UpdateComplete(this, EventArgs.Empty);
                 }
+                else if (e.Error != null)
+                {
+                    logger.WarnException("an error occured processing update", e.Error);
+                    if (UpdateError != null) UpdateError(e.Error, EventArgs.Empty);
+                }
+                else
+                {
+                    Process.Start(InstallerPath);
+                    Thread.Sleep(2000);
+                    if (UpdateComplete != null) UpdateComplete(this, EventArgs.Empty);
+                    App.Shutdown();
+                }
+            };
 
-                CheckSignature(installerPath); // will throw on error
-                Process.Start(installerPath);
-                Thread.Sleep(2000);
-                if (UpdateComplete != null) UpdateComplete(this, EventArgs.Empty);
-                App.Shutdown();
-            }
-            catch (Exception e)
+            _downloadWorker.ProgressChanged += (s, e) =>
             {
-                logger.WarnException("an error occured processing update", e);
-                if (UpdateError != null) UpdateError(e, EventArgs.Empty);
-            }
+                if (ProgressUpdate != null) ProgressUpdate(e.ProgressPercentage);
+            };
+
+            _downloadWorker.RunWorkerAsync();
         }
 
         private string GetFilenameFromUrl(string url)
@@ -239,7 +287,7 @@ namespace Zetetic.Updater
         private void ReadStreamToFile(Stream stream, string path, int fileSize)
         {
             int length = fileSize;
-            int bufferSize = 1024 * 10;
+            int bufferSize = 1024 * 16;
             byte[] buffer = new byte[bufferSize];
 
             if (fileSize > 0)
@@ -247,7 +295,7 @@ namespace Zetetic.Updater
                 logger.Info("preparing to read {0} bytes of data from download into file {1}", length, path);
                 using (FileStream fileStream = File.Open(path, FileMode.Create, FileAccess.Write))
                 {
-                    while (length > 0)
+                    while (length > 0 && (_downloadWorker == null || !_downloadWorker.CancellationPending))
                     {
                         int toRead = (bufferSize > length) ? length : bufferSize;
                         int bytesRead = stream.Read(buffer, 0, toRead);
@@ -258,7 +306,7 @@ namespace Zetetic.Updater
                         length -= bytesRead;
                         fileStream.Write(buffer, 0, bytesRead);
                         int pctComplete = (int)((((double)(fileSize - length)) / ((double)fileSize)) * 100.0);
-                        if (ProgressUpdate != null) ProgressUpdate(pctComplete);
+                        if (_downloadWorker != null && _downloadWorker.WorkerReportsProgress) _downloadWorker.ReportProgress(pctComplete);
                     }
                 }
             }

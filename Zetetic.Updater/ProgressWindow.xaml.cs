@@ -39,7 +39,7 @@ namespace Zetetic.Updater
             InitializeComponent();
         }
 
-        public EventHandler Cancel;
+        public event EventHandler Cancel;
 
         private void _buttonCancel_Click(object sender, RoutedEventArgs e)
         {

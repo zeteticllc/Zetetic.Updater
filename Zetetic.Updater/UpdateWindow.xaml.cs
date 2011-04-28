@@ -32,7 +32,14 @@ namespace Zetetic.Updater
                 Dispatcher.BeginInvoke((Action)(() =>
                 {
                     _updateProgress = new ProgressWindow();
-                    _updateProgress.Show();
+                    _updateProgress.Cancel += (s, eargs) =>
+                    {
+                        if (Model.CancelCommand.CanExecute(_updateProgress))
+                        {
+                            Model.CancelCommand.Execute(_updateProgress);
+                        }
+                    };
+                    _updateProgress.ShowDialog();
                 }));
             };
 
