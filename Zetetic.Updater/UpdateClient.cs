@@ -37,9 +37,16 @@ namespace Zetetic.Updater
             logger.Info("initializing update check at {0}", updateUrl);
             App = app;
             UpdateUri = updateUrl;
-            DoCheck = true;
-            _checkThread = new Thread(new ThreadStart(this.CheckForUpdates));
-            _checkThread.Start();
+        }
+
+        public void Start()
+        {
+            if (_checkThread == null)
+            {
+                DoCheck = true;
+                _checkThread = new Thread(new ThreadStart(this.CheckForUpdates));
+                _checkThread.Start();
+            }
         }
 
         #region Properties
