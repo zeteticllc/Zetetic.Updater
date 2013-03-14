@@ -1,7 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.ComponentModel;
 using System.Xml.Serialization;
 using System.Threading;
@@ -11,7 +8,6 @@ using System.Reflection;
 using System.Diagnostics;
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Cryptography;
-using CAPICOM;
 using System.Windows;
 using System.Windows.Input;
 using NLog;
@@ -371,14 +367,12 @@ namespace Zetetic.Updater
             }
 
             // step 3. verify the signature on the installer is good
-            logger.Debug("initializing CAPICOM SignedCode object");
-            CAPICOM.SignedCode signedFile = new CAPICOM.SignedCode();
-
-            logger.Debug("Setting verification file path to {0}", path);
-            signedFile.FileName = path;
-
             logger.Debug("Verifying file");
-            signedFile.Verify(false); // throws an exception if the signature is invalid
+            var valid = WinTrust.VerifyEmbeddedSignature(path);
+            if(!valid)
+            {
+                throw new Exception("Invalid authenticode signature");
+            }
         }
 
         #region IDisposable Members
