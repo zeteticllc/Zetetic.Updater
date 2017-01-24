@@ -14,23 +14,30 @@ using NLog;
 
 namespace Zetetic.Updater
 {
-    public class UpdateClient : INotifyPropertyChanged, IDisposable
+    public sealed class UpdateClient : INotifyPropertyChanged, IDisposable
     {
-        private static readonly Logger logger = LogManager.GetCurrentClassLogger();
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
-        public virtual event PropertyChangedEventHandler PropertyChanged;
+        public event PropertyChangedEventHandler PropertyChanged;
 
-        public virtual void OnPropertyChanged(object target, string propertyName)
+        public void OnPropertyChanged(object target, string propertyName)
         {
-            if (PropertyChanged != null) PropertyChanged(target ?? this, new PropertyChangedEventArgs(propertyName));
+            PropertyChanged?.Invoke(target ?? this, new PropertyChangedEventArgs(propertyName));
         }
 
-        private Thread _checkThread = null;
-        private BackgroundWorker _downloadWorker = null;
+        private Thread _checkThread;
+        private BackgroundWorker _downloadWorker;
+
+        public string PinnedPublicKey { get; set; }
+
+        public UpdateClient(Application app, string updateUrl, string pinnedPublicKey) : this(app, updateUrl)
+        {
+            PinnedPublicKey = pinnedPublicKey;
+        }
 
         public UpdateClient(Application app, string updateUrl)
         {
-            logger.Info("initializing update check at {0}", updateUrl);
+            Logger.Info("initializing update check at {0}", updateUrl);
             App = app;
             UpdateUri = updateUrl;
         }
@@ -40,7 +47,7 @@ namespace Zetetic.Updater
             if (_checkThread == null)
             {
                 DoCheck = true;
-                _checkThread = new Thread(new ThreadStart(this.CheckForUpdates));
+                _checkThread = new Thread(CheckForUpdates);
                 _checkThread.Start();
             }
         }
@@ -48,7 +55,7 @@ namespace Zetetic.Updater
         #region Properties
 
         private Application _app;
-        public virtual Application App
+        public Application App
         {
             get { return _app; }
             set
@@ -59,7 +66,7 @@ namespace Zetetic.Updater
         }
 
         private string _updateUri;
-        public virtual string UpdateUri
+        public string UpdateUri
         {
             get { return _updateUri; }
             set
@@ -70,7 +77,7 @@ namespace Zetetic.Updater
         }
 
         private ReleaseManifest _manifest;
-        public virtual ReleaseManifest Manifest
+        public ReleaseManifest Manifest
         {
             get { return _manifest; }
             set
@@ -82,7 +89,7 @@ namespace Zetetic.Updater
         }
 
         private bool _doUpdate;
-        public virtual bool DoUpdate
+        public bool DoUpdate
         {
             get { return _doUpdate; }
             set
@@ -93,7 +100,7 @@ namespace Zetetic.Updater
         }
 
         private bool _doCheck;
-        public virtual bool DoCheck
+        public bool DoCheck
         {
             get { return _doCheck; }
             set
@@ -104,7 +111,7 @@ namespace Zetetic.Updater
         }
 
         private string _installerPath;
-        public virtual string InstallerPath
+        public string InstallerPath
         {
             get { return _installerPath; }
             set
@@ -114,13 +121,8 @@ namespace Zetetic.Updater
             }
         }
 
-        public virtual string UpdateLabel
-        {
-            get 
-            {
-                return Manifest == null ? null : string.Format("A new version of {0}, {1}, is now available. Would you like to download it?", Manifest.Name, Manifest.Version);
-            }
-        }
+        public string UpdateLabel => Manifest == null ? null :
+            $"A new version of {Manifest.Name}, {Manifest.Version}, is now available. Would you like to download it?";
 
         #endregion
 
@@ -135,19 +137,14 @@ namespace Zetetic.Updater
         {
             get
             {
-                if (_updateCommand == null) _updateCommand = new RelayCommand(
-                    (o) =>
-                    {
-                        DoCheck = false; // no further checks after the user provides input
-                        if (UpdateBegin != null) UpdateBegin(o, EventArgs.Empty);
-                        ExecuteUpdate();
-                    },
-                    (o) =>
-                    {
-                        return Manifest != null;
-                    }
-                );
-                return _updateCommand;
+                return _updateCommand ?? (_updateCommand = new RelayCommand(
+                           (o) =>
+                           {
+                               DoCheck = false; // no further checks after the user provides input
+                               UpdateBegin?.Invoke(o, EventArgs.Empty);
+                               ExecuteUpdate();
+                           },
+                           (o) => Manifest != null));
             }
         }
 
@@ -156,30 +153,21 @@ namespace Zetetic.Updater
         {
             get
             {
-                if (_cancelCommand == null) _cancelCommand = new RelayCommand(
-                    (o) =>
-                    {
-                        DoCheck = false;
-                        if (_downloadWorker != null)
-                        {
-                            _downloadWorker.CancelAsync();
-                        }
-                        ((Window)o).Close();
-                    },
-                    (o) =>
-                    {
-                        return o != null;
-                    }
-                );
-                return _cancelCommand;
+                return _cancelCommand ?? (_cancelCommand = new RelayCommand(
+                           (o) =>
+                           {
+                               DoCheck = false;
+                               _downloadWorker?.CancelAsync();
+                               ((Window) o).Close();
+                           },
+                           (o) => o != null));
             }
         }
         #endregion
 
         public void StopAsync()
         {
-            if(_checkThread != null)
-                _checkThread.Abort();
+            _checkThread?.Abort();
             _checkThread = null;
         }
 
@@ -189,36 +177,36 @@ namespace Zetetic.Updater
 
         public void CheckForUpdates()
         {
-            XmlSerializer serializer = new XmlSerializer(typeof(ReleaseManifest));
+            var serializer = new XmlSerializer(typeof(ReleaseManifest));
             while (DoCheck)
             {
                 try
                 {
-                    WebRequest request = WebRequest.Create(UpdateUri);
-                    WebResponse response = request.GetResponse();
+                    var request = WebRequest.Create(UpdateUri);
+                    var response = request.GetResponse();
                     if (response.ContentLength > 0)
                     {
                         using (TextReader reader = new StreamReader(response.GetResponseStream()))
                         {
                             Manifest = (ReleaseManifest)serializer.Deserialize(reader);
 
-                            Version manifestVersion = new Version(Manifest.Version);
-                            Version runningVersion = Assembly.GetEntryAssembly().GetName().Version;
+                            var manifestVersion = new Version(Manifest.Version);
+                            var runningVersion = Assembly.GetEntryAssembly().GetName().Version;
 
                             if (manifestVersion.CompareTo(runningVersion) > 0)
                             {
-                                logger.Info("Manifest version {0} is greater than current application version {1}", manifestVersion, runningVersion);
+                                Logger.Info("Manifest version {0} is greater than current application version {1}", manifestVersion, runningVersion);
 
-                                if (UpdateAvailable != null) UpdateAvailable(this);
+                                UpdateAvailable?.Invoke(this);
                             }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    logger.ErrorException(string.Format("unable to fetch path {0}", UpdateUri), ex);
+                    Logger.ErrorException($"unable to fetch path {UpdateUri}", ex);
                 }
-                if(DoCheck) System.Threading.Thread.Sleep(60 * 60 * 1000);
+                if(DoCheck) Thread.Sleep(60 * 60 * 1000);
             }
         }
 
@@ -232,11 +220,11 @@ namespace Zetetic.Updater
 
             _downloadWorker.DoWork += (s, e) =>
             {
-                    WebRequest fileRequest = WebRequest.Create(Manifest.PackageUrl);
-                    WebResponse fileResponse = fileRequest.GetResponse();
+                    var fileRequest = WebRequest.Create(Manifest.PackageUrl);
+                    var fileResponse = fileRequest.GetResponse();
 
                     InstallerPath = Path.GetTempPath() + @"\" + GetFilenameFromUrl(Manifest.PackageUrl);
-                    using (Stream stream = fileResponse.GetResponseStream())
+                    using (var stream = fileResponse.GetResponseStream())
                     {
                         ReadStreamToFile(stream, InstallerPath, (int)fileResponse.ContentLength);
                     }
@@ -255,26 +243,26 @@ namespace Zetetic.Updater
             {
                 if (e.Cancelled) 
                 {
-                    logger.Warn("update cancelled");
-                    if (UpdateComplete != null) UpdateComplete(this, EventArgs.Empty);
+                    Logger.Warn("update cancelled");
+                    UpdateComplete?.Invoke(this, EventArgs.Empty);
                 }
                 else if (e.Error != null)
                 {
-                    logger.WarnException("an error occured processing update", e.Error);
-                    if (UpdateError != null) UpdateError(e.Error, EventArgs.Empty);
+                    Logger.WarnException("an error occured processing update", e.Error);
+                    UpdateError?.Invoke(e.Error, EventArgs.Empty);
                 }
                 else
                 {
                     Process.Start(InstallerPath);
                     Thread.Sleep(2000);
-                    if (UpdateComplete != null) UpdateComplete(this, EventArgs.Empty);
+                    UpdateComplete?.Invoke(this, EventArgs.Empty);
                     App.Shutdown();
                 }
             };
 
             _downloadWorker.ProgressChanged += (s, e) =>
             {
-                if (ProgressUpdate != null) ProgressUpdate(e.ProgressPercentage);
+                ProgressUpdate?.Invoke(e.ProgressPercentage);
             };
 
             _downloadWorker.RunWorkerAsync();
@@ -282,92 +270,87 @@ namespace Zetetic.Updater
 
         private string GetFilenameFromUrl(string url)
         {
-            Uri uri = new Uri(url);
-            string[] segments = uri.Segments;
+            var uri = new Uri(url);
+            var segments = uri.Segments;
             return Uri.UnescapeDataString(segments[segments.Length - 1]);
         }
 
         private void ReadStreamToFile(Stream stream, string path, int fileSize)
         {
-            int length = fileSize;
-            int bufferSize = 1024 * 16;
-            byte[] buffer = new byte[bufferSize];
-
-            if (fileSize > 0)
+            var length = fileSize;
+            var bufferSize = 1024 * 16;
+            var buffer = new byte[bufferSize];
+            
+            if (fileSize <= 0) return;
+            Logger.Info("preparing to read {0} bytes of data from download into file {1}", length, path);
+            using (var fileStream = File.Open(path, FileMode.Create, FileAccess.Write))
             {
-                logger.Info("preparing to read {0} bytes of data from download into file {1}", length, path);
-                using (FileStream fileStream = File.Open(path, FileMode.Create, FileAccess.Write))
+                while (length > 0 && (_downloadWorker == null || !_downloadWorker.CancellationPending))
                 {
-                    while (length > 0 && (_downloadWorker == null || !_downloadWorker.CancellationPending))
+                    var toRead = (bufferSize > length) ? length : bufferSize;
+                    var bytesRead = stream.Read(buffer, 0, toRead);
+                    if (bytesRead == 0)
                     {
-                        int toRead = (bufferSize > length) ? length : bufferSize;
-                        int bytesRead = stream.Read(buffer, 0, toRead);
-                        if (bytesRead == 0)
-                        {
-                            throw new Exception("server disconnected");
-                        }
-                        length -= bytesRead;
-                        fileStream.Write(buffer, 0, bytesRead);
-                        int pctComplete = (int)((((double)(fileSize - length)) / ((double)fileSize)) * 100.0);
-                        if (_downloadWorker != null && _downloadWorker.WorkerReportsProgress) _downloadWorker.ReportProgress(pctComplete);
+                        throw new Exception("server disconnected");
                     }
+                    length -= bytesRead;
+                    fileStream.Write(buffer, 0, bytesRead);
+                    var pctComplete = (int)(((fileSize - length) / ((double)fileSize)) * 100.0);
+                    if (_downloadWorker != null && _downloadWorker.WorkerReportsProgress) _downloadWorker.ReportProgress(pctComplete);
                 }
             }
         }
 
-        private void CheckSignature(string path)
+        private X509Certificate GetCertificate(string path)
         {
-            string currentPath = Assembly.GetEntryAssembly().Location;
-
-            X509Certificate msiCert = null;
-            X509Certificate appCert = null;
-
-            // step 1 - extract the certificates from the signed files
+            X509Certificate cert = null;
             try
             {
-                logger.Debug("Extracting X509 certificate from MSI at {0}", path);
-                msiCert = X509Certificate.CreateFromSignedFile(path);
+                Logger.Debug("Extracting X509 certificate from file {0}", path);
+                cert = X509Certificate.CreateFromSignedFile(path);
             }
             catch (CryptographicException e)
             {
-                logger.Warn("MSI at {0} is not properly signed {1}", path, e.Message);
+                Logger.Warn("MSI at {0} is not properly signed {1}", path, e.Message);
             }
+            return cert;
+        }
 
-            try
-            {
-                logger.Debug("Extracting X509 certificate from currently running application at {0}", currentPath);
-                appCert = X509Certificate.CreateFromSignedFile(currentPath);
-            }
-            catch (Exception e)
-            {
-                logger.Warn("application at {0} is not signed {1}", currentPath, e.Message);
-            }
+        private void CheckSignature(string path)
+        {
+            var currentPath = Assembly.GetEntryAssembly().Location;
 
-            // step 2, check the certificates to make sure they match
-            if (appCert == null && msiCert == null)
+            var msiCert = GetCertificate(path);
+            
+            if (msiCert == null) throw new Exception("no signatures present on installer");
+
+            if (!string.IsNullOrEmpty(PinnedPublicKey))
             {
-                // if neither file is signed, skip the check
-                logger.Warn("no signatures present on installer or running application, skipping validity check");
-                return;
-            }
-            else if (appCert != null && msiCert != null)
-            {
-                // if both files are signed, compare the subjects and make sure they are the same
-                if (!string.IsNullOrEmpty(msiCert.Subject) &&
-                    string.Compare(msiCert.Subject, appCert.Subject, StringComparison.InvariantCultureIgnoreCase) == 0)
+                // if there is a pinned key, require a match
+                if (!PinnedPublicKey.Equals(msiCert.GetPublicKeyString(), StringComparison.CurrentCultureIgnoreCase))
                 {
-                    logger.Info("verified subject of MSI against current application certificate");
+                    throw new Exception($"Installer public key {msiCert.GetPublicKeyString()} failed to match pinned public key {PinnedPublicKey}");
                 }
-                else
-                {
+            }
+            else
+            {
+                var appCert = GetCertificate(currentPath);
+                if (appCert == null) throw new Exception("no signatures present on current application");
+
+                var publicKeyString = msiCert.GetPublicKeyString();
+                if (publicKeyString != null && !(
+                        msiCert.Subject.Equals(appCert.Subject, StringComparison.CurrentCultureIgnoreCase)
+                        || publicKeyString.Equals(appCert.GetPublicKeyString(), StringComparison.CurrentCultureIgnoreCase)
+                    ))
+                {   
                     throw new Exception(
-                        string.Format("Installer certificate subject {0} does not match current application certificate subject {1}.", msiCert.Subject, appCert.Subject)
+                        $"Installer certificate subject or public key({msiCert.Subject}/{msiCert.GetPublicKeyString()})does not match current application certificate subject or public key {appCert.Subject}/{appCert.GetPublicKeyString()}."
                     );
                 }
             }
 
             // step 3. verify the signature on the installer is good
-            logger.Debug("Verifying file");
+            Logger.Debug("Verifying file");
             var valid = WinTrust.VerifyEmbeddedSignature(path);
             if(!valid)
             {
@@ -375,13 +358,13 @@ namespace Zetetic.Updater
             }
         }
 
-        #region IDisposable Members
+#region IDisposable Members
 
-        public virtual void Dispose()
+        public void Dispose()
         {
             StopAsync();
         }
 
-        #endregion
+#endregion
     }
 }
