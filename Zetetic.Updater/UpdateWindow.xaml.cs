@@ -65,10 +65,11 @@ namespace Zetetic.Updater
             {
                 Dispatcher.BeginInvoke((Action)(() =>
                 {
-                    MessageBox.Show(((Exception)o).Message, "Update Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                     _updateProgress.Close();
                     Close();
+                    MessageBox.Show(((Exception)o).Message, "Update Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }));
+                
             };
         }
     }

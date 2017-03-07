@@ -322,7 +322,7 @@ namespace Zetetic.Updater
 
             var msiCert = GetCertificate(path);
             
-            if (msiCert == null) throw new Exception("no signatures present on installer");
+            if (msiCert == null) throw new Exception("no valid signatures present on installer");
 
             if (!string.IsNullOrEmpty(PinnedPublicKey))
             {
