@@ -30,7 +30,14 @@ namespace Zetetic.Updater
 
         public string PinnedPublicKey { get; set; }
 
-        public UpdateClient(Application app, string updateUrl, string pinnedPublicKey) : this(app, updateUrl)
+        public int CheckInterval { get; set; }
+
+        public UpdateClient(Application app, string updateUrl, int checkInterval) : this(app, updateUrl)
+        {
+            CheckInterval = checkInterval;
+        }
+
+        public UpdateClient(Application app, string updateUrl, int checkInterval, string pinnedPublicKey) : this(app, updateUrl, checkInterval)
         {
             PinnedPublicKey = pinnedPublicKey;
         }
@@ -40,6 +47,7 @@ namespace Zetetic.Updater
             Logger.Info("initializing update check at {0}", updateUrl);
             App = app;
             UpdateUri = updateUrl;
+            CheckInterval = 60*60*1000;
         }
 
         public void Start()
@@ -140,7 +148,6 @@ namespace Zetetic.Updater
                 return _updateCommand ?? (_updateCommand = new RelayCommand(
                            (o) =>
                            {
-                               DoCheck = false; // no further checks after the user provides input
                                UpdateBegin?.Invoke(o, EventArgs.Empty);
                                ExecuteUpdate();
                            },
@@ -156,7 +163,6 @@ namespace Zetetic.Updater
                 return _cancelCommand ?? (_cancelCommand = new RelayCommand(
                            (o) =>
                            {
-                               DoCheck = false;
                                _downloadWorker?.CancelAsync();
                                ((Window) o).Close();
                            },
@@ -196,7 +202,7 @@ namespace Zetetic.Updater
                             if (manifestVersion.CompareTo(runningVersion) > 0)
                             {
                                 Logger.Info("Manifest version {0} is greater than current application version {1}", manifestVersion, runningVersion);
-
+                                DoCheck = false; // stop thread once UpdateAvailable notification is complete
                                 UpdateAvailable?.Invoke(this);
                             }
                         }
@@ -206,7 +212,7 @@ namespace Zetetic.Updater
                 {
                     Logger.ErrorException($"unable to fetch path {UpdateUri}", ex);
                 }
-                if(DoCheck) Thread.Sleep(60 * 60 * 1000);
+                if(DoCheck) Thread.Sleep(CheckInterval);
             }
         }
 
